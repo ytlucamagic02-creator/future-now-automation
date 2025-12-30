@@ -1,80 +1,70 @@
-#!/usr/bin/env python3
 import os
 import json
-from google.oauth2.credentials import Credentials
+import pickle
+from google.auth.transport.requests import Request
+from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
-from openai import OpenAI
+from google.oauth2.credentials import Credentials
 
-def get_youtube_service():
-    """YouTube API 서비스 생성"""
-    client_id = os.environ.get('YOUTUBE_CLIENT_ID')
-    client_secret = os.environ.get('YOUTUBE_CLIENT_SECRET')
-    refresh_token = os.environ.get('YOUTUBE_REFRESH_TOKEN')
-    
-    if not all([client_id, client_secret, refresh_token]):
-        raise ValueError("YouTube credentials not found in environment variables")
-    
-    credentials = Credentials(
-        None,
-        refresh_token=refresh_token,
-        token_uri="https://oauth2.googleapis.com/token",
-        client_id=client_id,
-        client_secret=client_secret
-    )
-    
-    return build('youtube', 'v3', credentials=credentials)
+# temp 폴더 생성
+os.makedirs('temp', exist_ok=True)
 
-def generate_description(title):
-    """OpenAI로 Shorts 설명 생성"""
-    client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
+SCOPES = ['https://www.googleapis.com/auth/youtube.upload']
+
+def get_authenticated_service():
+    """Authenticate and return YouTube service"""
     
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "You are a YouTube Shorts description expert for AI and future technology content."},
-                {"role": "user", "content": f"Create a short YouTube Shorts description (100-150 characters) for this video titled '{title}'. Make it engaging and include relevant hashtags."}
-            ],
-            max_tokens=100,
-            temperature=0.7
-        )
-        description = response.choices[0].message.content.strip()
+    creds = None
+    
+    # Check for existing token
+    if os.path.exists('token.pickle'):
+        with open('token.pickle', 'rb') as token:
+            creds = pickle.load(token)
+    
+    # If no valid credentials, use environment variables
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            # Use GitHub Secrets
+            client_id = os.environ.get('YOUTUBE_CLIENT_ID')
+            client_secret = os.environ.get('YOUTUBE_CLIENT_SECRET')
+            refresh_token = os.environ.get('YOUTUBE_REFRESH_TOKEN')
+            
+            if client_id and client_secret and refresh_token:
+                creds = Credentials(
+                    token=None,
+                    refresh_token=refresh_token,
+                    token_uri='https://oauth2.googleapis.com/token',
+                    client_id=client_id,
+                    client_secret=client_secret,
+                    scopes=SCOPES
+                )
+                creds.refresh(Request())
+            else:
+                print("❌ Error: YouTube credentials not found!")
+                return None
         
-        # 해시태그 추가
-        description += "\n\n#Shorts #AI #FutureTech #Technology #AIRevolution #TechShorts #Innovation"
-        
-        return description
-    except Exception as e:
-        print(f"Error generating description: {e}")
-        return f"{title}\n\n#Shorts #AI #FutureTech #Technology"
+        # Save credentials
+        with open('token.pickle', 'wb') as token:
+            pickle.dump(creds, token)
+    
+    return build('youtube', 'v3', credentials=creds)
 
-def upload_short(video_path, title):
-    """YouTube Shorts 업로드"""
-    print(f"Uploading Short: {title}")
+def upload_short(youtube, video_file, title, description, playlist_id=None):
+    """Upload a single short to YouTube"""
     
-    if not os.path.exists(video_path):
-        print(f"Error: Video file not found: {video_path}")
-        return None
+    print(f"\n📤 Uploading: {title}")
     
-    youtube = get_youtube_service()
-    
-    # 설명 생성
-    description = generate_description(title)
-    
-    print(f"Title: {title}")
-    print(f"Description: {description[:100]}...")
-    
-    # 업로드 설정
     body = {
         'snippet': {
             'title': title,
             'description': description,
-            'tags': ['Shorts', 'AI', 'Future Technology', 'Tech', 'AI Revolution', 
-                    'Innovation', 'Tech Shorts', 'AI Shorts', 'Future Tech'],
+            'tags': ['Shorts', 'AI', 'Future', 'Technology', 'Innovation'],
             'categoryId': '28',  # Science & Technology
-            'defaultLanguage': 'en',  # ⭐ 영어 설정
-            'defaultAudioLanguage': 'en'  # ⭐ 오디오 언어 영어
+            'defaultLanguage': 'en',
+            'defaultAudioLanguage': 'en'
         },
         'status': {
             'privacyStatus': 'public',
@@ -82,83 +72,118 @@ def upload_short(video_path, title):
         }
     }
     
-    # 미디어 파일
-    media = MediaFileUpload(video_path,
-                           mimetype='video/*',
-                           resumable=True,
-                           chunksize=1024*1024)
+    media = MediaFileUpload(video_file, chunksize=-1, resumable=True, mimetype='video/*')
     
-    # 업로드 실행
-    request = youtube.videos().insert(
-        part='snippet,status',
-        body=body,
-        media_body=media
-    )
-    
-    response = None
-    while response is None:
-        status, response = request.next_chunk()
-        if status:
-            print(f"Upload progress: {int(status.progress() * 100)}%")
-    
-    video_id = response['id']
-    video_url = f"https://www.youtube.com/shorts/{video_id}"
-    
-    print(f"✅ Short uploaded successfully!")
-    print(f"Video ID: {video_id}")
-    print(f"Video URL: {video_url}")
-    
-    # 재생목록에 추가
-    playlist_id = os.environ.get('YOUTUBE_SHORTS_PLAYLIST_ID')
-    if playlist_id:
-        try:
-            youtube.playlistItems().insert(
-                part='snippet',
-                body={
-                    'snippet': {
-                        'playlistId': playlist_id,
-                        'resourceId': {
-                            'kind': 'youtube#video',
-                            'videoId': video_id
+    try:
+        request = youtube.videos().insert(
+            part='snippet,status',
+            body=body,
+            media_body=media
+        )
+        
+        response = None
+        while response is None:
+            status, response = request.next_chunk()
+            if status:
+                print(f"   ⏳ Upload progress: {int(status.progress() * 100)}%")
+        
+        video_id = response['id']
+        video_url = f"https://youtube.com/shorts/{video_id}"
+        
+        print(f"   ✅ Uploaded successfully!")
+        print(f"   🔗 URL: {video_url}")
+        
+        # Add to playlist if specified
+        if playlist_id:
+            try:
+                youtube.playlistItems().insert(
+                    part='snippet',
+                    body={
+                        'snippet': {
+                            'playlistId': playlist_id,
+                            'resourceId': {
+                                'kind': 'youtube#video',
+                                'videoId': video_id
+                            }
                         }
                     }
-                }
-            ).execute()
-            print(f"✅ Added to Shorts playlist: {playlist_id}")
-        except Exception as e:
-            print(f"Warning: Could not add to playlist: {e}")
-    
-    return video_url
+                ).execute()
+                print(f"   ✅ Added to Shorts playlist")
+            except Exception as e:
+                print(f"   ⚠️ Playlist add failed: {e}")
+        
+        return video_url
+        
+    except Exception as e:
+        print(f"   ❌ Upload failed: {e}")
+        return None
 
 def upload_shorts():
-    """모든 Shorts 업로드"""
-    print("=" * 60)
-    print("📤 Uploading YouTube Shorts...")
-    print("=" * 60)
+    """Upload all 3 shorts"""
     
-    # Shorts 정보 로드
-    with open('temp/created_shorts.json', 'r') as f:
-        shorts = json.load(f)
+    print("🚀 Starting Shorts upload process...")
     
-    urls = []
-    for short in shorts:
-        video_path = short['output_path']
+    # Authenticate
+    youtube = get_authenticated_service()
+    if not youtube:
+        return
+    
+    # Load shorts metadata
+    with open('temp/shorts_segments.json', 'r', encoding='utf-8') as f:
+        segments = json.load(f)
+    
+    shorts = segments['shorts'][:3]  # Exactly 3 shorts
+    
+    # Get playlist ID from environment
+    playlist_id = os.environ.get('SHORTS_PLAYLIST_ID')
+    
+    print(f"\n📊 Found {len(shorts)} shorts to upload")
+    if playlist_id:
+        print(f"📋 Shorts Playlist ID: {playlist_id}")
+    
+    uploaded_urls = []
+    
+    for i, short in enumerate(shorts, 1):
+        video_file = f'temp/short_{i}.mp4'
+        
+        if not os.path.exists(video_file):
+            print(f"\n❌ Short #{i} not found: {video_file}")
+            continue
+        
+        # Build description
         title = short['title']
+        hook = short['hook']
+        script_preview = short['script'][:100] + '...'
+        hashtags = short.get('hashtags', '#AI #FutureTech #Shorts')
         
-        url = upload_short(video_path, title)
+        description = f"""{hook}
+
+{script_preview}
+
+🔔 Subscribe for daily AI & Future Tech insights!
+💡 Follow for more: @FutureNow2
+
+{hashtags}
+#YouTubeShorts #TechShorts #AINews"""
+        
+        # Upload
+        url = upload_short(youtube, video_file, title, description, playlist_id)
+        
         if url:
-            urls.append(url)
+            uploaded_urls.append(url)
+    
+    # Save URLs
+    if uploaded_urls:
+        with open('temp/shorts_urls.txt', 'w', encoding='utf-8') as f:
+            for url in uploaded_urls:
+                f.write(url + '\n')
         
-        print()
-    
-    # URL 저장
-    with open('temp/shorts_urls.txt', 'w') as f:
-        for url in urls:
-            f.write(url + '\n')
-    
-    print("=" * 60)
-    print(f"✅ Uploaded {len(urls)} Shorts successfully!")
-    print("=" * 60)
+        print(f"\n✅ Successfully uploaded {len(uploaded_urls)}/3 shorts!")
+        print("\n🔗 Shorts URLs:")
+        for i, url in enumerate(uploaded_urls, 1):
+            print(f"   {i}. {url}")
+    else:
+        print("\n❌ No shorts were uploaded successfully")
 
 if __name__ == '__main__':
     upload_shorts()
