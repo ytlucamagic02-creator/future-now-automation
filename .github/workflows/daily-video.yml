@@ -6,70 +6,59 @@ on:
   workflow_dispatch:  # 수동 실행 가능
 
 jobs:
-  create-and-upload-video:
+  generate-and-upload:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
     
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v3
-
+      
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
-
-      - name: Install Python dependencies
+      
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-
-      - name: Create temp directory
-        run: mkdir -p temp
-
-      - name: Set up Google credentials
+      
+      - name: Install ffmpeg
         run: |
-          echo '${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}' > temp/google_credentials.json
-          export GOOGLE_APPLICATION_CREDENTIALS="temp/google_credentials.json"
-
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+      
+      - name: Set up Google Cloud credentials
+        run: |
+          echo '${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}' > /tmp/google_credentials.json
+          echo "GOOGLE_APPLICATION_CREDENTIALS=/tmp/google_credentials.json" >> $GITHUB_ENV
+      
       - name: Generate script
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: python scripts/generate_script.py
-
-      - name: Search Pexels videos
+      
+      - name: Search videos
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
         run: python scripts/search_videos.py
-
-      - name: Create silent video
-        run: python scripts/create_video.py
-
-      - name: Generate audio (Google TTS)
+      
+      - name: Generate audio
         env:
-          GOOGLE_APPLICATION_CREDENTIALS: temp/google_credentials.json
+          GOOGLE_APPLICATION_CREDENTIALS: /tmp/google_credentials.json
         run: python scripts/generate_audio.py
-
+      
+      - name: Create video
+        run: python scripts/create_video.py
+      
       - name: Merge audio and video
         run: python scripts/merge_audio_video.py
-
+      
       - name: Generate thumbnail
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: python scripts/generate_thumbnail.py
-
-      - name: Add timestamp to description
-        run: |
-          if [ -f temp/script.txt ]; then
-            echo -e "\n\n📝 Generated on: $(date -u '+%Y-%m-%d %H:%M UTC')" >> temp/script.txt
-          fi
-
+      
       - name: Upload to YouTube
         env:
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
@@ -78,16 +67,16 @@ jobs:
           YOUTUBE_PLAYLIST_ID: ${{ secrets.YOUTUBE_PLAYLIST_ID }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: python scripts/upload_youtube.py
-
+      
       - name: Extract shorts segments
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: python scripts/extract_shorts.py
-
-      - name: Create shorts videos
+      
+      - name: Create shorts
         run: python scripts/create_shorts.py
-
-      - name: Upload shorts to YouTube
+      
+      - name: Upload shorts
         env:
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
@@ -95,32 +84,10 @@ jobs:
           YOUTUBE_SHORTS_PLAYLIST_ID: ${{ secrets.YOUTUBE_SHORTS_PLAYLIST_ID }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: python scripts/upload_shorts.py
-
-      - name: Save success metadata
-        run: |
-          echo "Video generation completed at $(date -u)" > temp/upload_success.txt
-          if [ -f temp/youtube_url.txt ]; then
-            cat temp/youtube_url.txt >> temp/upload_success.txt
-          fi
-
-      - name: Archive artifacts
-        uses: actions/upload-artifact@v3
+      
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: video-artifacts
-          path: |
-            temp/final_video.mp4
-            temp/thumbnail.jpg
-            temp/script.txt
-            temp/audio.mp3
-            temp/short_*.mp4
-            temp/upload_success.txt
-            temp/youtube_url.txt
-            temp/shorts_urls.txt
-          retention-days: 90
-
-      - name: Cleanup
-        if: always()
-        run: |
-          rm -f temp/google_credentials.json
-          echo "Cleanup completed"
+          name: outputs
+          path: temp/
