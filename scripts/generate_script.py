@@ -1,122 +1,68 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Future Now - AI & Tech Script Generator
-GPT-4o로 미래 기술 주제 대본 생성 (6-8분, 영어)
-"""
-
 import os
-import sys
 from openai import OpenAI
 
 def generate_script():
-    """미래 기술 주제 대본 생성"""
-    
+    """OpenAI GPT-4o로 Future Tech 주제 스크립트 생성"""
     print("🤖 Generating Future Tech script with GPT-4o...")
     
-    # OpenAI 클라이언트 초기화
-    client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+    # temp 폴더 생성 ⭐ 추가!
+    os.makedirs('temp', exist_ok=True)
     
-    # 프롬프트
-    prompt = """You are a Future Technology content creator for YouTube.
+    client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
+    
+    prompt = """Create an engaging 6-8 minute video script about AI and future technology for 2030.
 
-Create a compelling 6-8 minute video script (1,200-1,500 words) about ONE of these cutting-edge topics:
+Requirements:
+- Topic: Choose ONE fascinating aspect of AI, quantum computing, robotics, space tech, or metaverse
+- Style: Informative, inspiring, forward-thinking
+- Length: 1,200-1,500 words
+- Tone: Professional yet accessible, like a tech documentary
+- Structure: Hook → Context → Main Points (3-4) → Future Impact → Conclusion
+- Language: English (US)
+- Target audience: Tech enthusiasts, professionals, curious minds
 
-**AI & Machine Learning:**
-- "Will AI Replace Your Job by 2030?"
-- "GPT-5: What to Expect from the Next AI Revolution"
-- "AI Consciousness: Are We Close to Sentient Machines?"
-- "How AI is Transforming Healthcare and Saving Lives"
+Focus on:
+- Real research and current developments
+- Specific examples and breakthroughs
+- Expert predictions for 2030
+- Practical implications for society
+- Balance optimism with realistic challenges
 
-**Quantum Computing:**
-- "Quantum Computers: The End of Encryption?"
-- "IBM's Quantum Breakthrough: What It Means for You"
-- "Quantum Computing vs Supercomputers: The Ultimate Showdown"
+Avoid:
+- Overly technical jargon
+- Sensationalism or fear-mongering
+- Generic statements without substance
+- Promotional content
 
-**Metaverse & Virtual Reality:**
-- "Is the Metaverse Dead or Just Getting Started?"
-- "Apple Vision Pro: The Future of Computing?"
-- "Virtual Reality Therapy: Healing in Digital Worlds"
-
-**Robotics & Automation:**
-- "Humanoid Robots: Your Future Coworker?"
-- "Tesla Bot vs Boston Dynamics: The Robot Wars"
-- "Robotic Surgery: Safer Than Human Doctors?"
-
-**Space Technology:**
-- "SpaceX Starship: Humanity's Ticket to Mars"
-- "Space Mining: The Trillion Dollar Industry"
-- "Living on Mars: What Would Daily Life Look Like?"
-
-**SCRIPT REQUIREMENTS:**
-
-1. **Hook (First 15 seconds):**
-   - Start with a shocking fact or provocative question
-   - Make viewers WANT to keep watching
-   - Example: "By 2030, AI could replace 300 million jobs. Is yours safe?"
-
-2. **Structure:**
-   - Introduction: Set up the topic (30 seconds)
-   - Main Content: 3-4 key points with explanations (5-6 minutes)
-   - Conclusion: Summary + future implications (1 minute)
-
-3. **Tone:**
-   - Enthusiastic but informative
-   - Professional yet accessible
-   - Future-focused and optimistic
-   - Use analogies for complex topics
-
-4. **Engagement:**
-   - Ask rhetorical questions
-   - Use "you" to address viewers
-   - Include surprising statistics
-   - Paint vivid future scenarios
-
-5. **Call-to-Action (End):**
-   - "What do you think about this technology?"
-   - "Subscribe for more future tech insights"
-   - "Let me know in the comments"
-
-6. **Length:** 1,200-1,500 words (6-8 minutes reading time)
-
-7. **Language:** Clear, conversational English
-
-**OUTPUT FORMAT:**
-Just the script text, no markdown, no title, no extra formatting. Ready for text-to-speech.
-
-Now generate ONE script on a topic you choose from above."""
+Write ONLY the narration script. No titles, no stage directions, just the spoken words."""
 
     try:
-        # GPT-4o 호출
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-4o",
             messages=[
-                {"role": "system", "content": "You are an expert Future Technology content creator and science communicator."},
+                {"role": "system", "content": "You are an expert science communicator specializing in AI and future technology. You create engaging, accurate, and thought-provoking video scripts."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.8,
-            max_tokens=2500
+            max_tokens=2500,
+            temperature=0.8
         )
         
         script = response.choices[0].message.content.strip()
         
         # 스크립트 저장
-        with open("temp/script.txt", "w", encoding="utf-8") as f:
+        with open('temp/script.txt', 'w', encoding='utf-8') as f:
             f.write(script)
         
-        word_count = len(script.split())
-        print(f"✅ Script generated: {word_count} words")
-        print(f"📝 Estimated duration: {word_count/150:.1f} minutes")
-        print(f"💾 Saved to: temp/script.txt")
-        
-        # 미리보기 (처음 200자)
-        print(f"\n📖 Preview:\n{script[:200]}...\n")
+        print(f"✅ Script generated successfully!")
+        print(f"Length: {len(script.split())} words")
+        print(f"Preview: {script[:200]}...")
         
         return script
         
     except Exception as e:
         print(f"❌ Error generating script: {e}")
-        sys.exit(1)
+        raise
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     generate_script()
