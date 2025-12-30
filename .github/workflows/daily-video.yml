@@ -1,93 +1,107 @@
-name: Daily Future Tech Video Production
+name: Daily Future Now Video
 
 on:
   schedule:
-    - cron: '0 13 * * *'  # 매일 13:00 UTC (한국 시간 22:00)
-  workflow_dispatch:  # 수동 실행 가능
+    - cron: '0 2 * * *'  # Daily at 2 AM UTC (11 AM KST)
+  workflow_dispatch:  # Manual trigger
 
 jobs:
   generate-and-upload:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-      
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-      
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-      
-      - name: Install ffmpeg
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
-      
-      - name: Set up Google Cloud credentials
-        run: |
-          echo '${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}' > /tmp/google_credentials.json
-          echo "GOOGLE_APPLICATION_CREDENTIALS=/tmp/google_credentials.json" >> $GITHUB_ENV
-      
-      - name: Generate script
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: python scripts/generate_script.py
-      
-      - name: Search videos
-        env:
-          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
-        run: python scripts/search_videos.py
-      
-      - name: Generate audio
-        env:
-          GOOGLE_APPLICATION_CREDENTIALS: /tmp/google_credentials.json
-        run: python scripts/generate_audio.py
-      
-      - name: Create video
-        run: python scripts/create_video.py
-      
-      - name: Merge audio and video
-        run: python scripts/merge_audio_video.py
-      
-      - name: Generate thumbnail
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: python scripts/generate_thumbnail.py
-      
-      - name: Upload to YouTube
-        env:
-          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
-          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
-          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
-          YOUTUBE_PLAYLIST_ID: ${{ secrets.YOUTUBE_PLAYLIST_ID }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: python scripts/upload_youtube.py
-      
-      - name: Extract shorts segments
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: python scripts/extract_shorts.py
-      
-      - name: Create shorts
-        run: python scripts/create_shorts.py
-      
-      - name: Upload shorts
-        env:
-          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
-          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
-          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
-          YOUTUBE_SHORTS_PLAYLIST_ID: ${{ secrets.YOUTUBE_SHORTS_PLAYLIST_ID }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: python scripts/upload_shorts.py
-      
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: outputs
-          path: temp/
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg ffprobe
+    
+    - name: Install Python dependencies
+      run: |
+        pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Create temp directory
+      run: mkdir -p temp
+    
+    - name: Set up Google Cloud credentials
+      env:
+        GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
+      run: |
+        echo "$GOOGLE_APPLICATION_CREDENTIALS_JSON" > google-credentials.json
+        echo "GOOGLE_APPLICATION_CREDENTIALS=$(pwd)/google-credentials.json" >> $GITHUB_ENV
+    
+    - name: Generate script
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      run: python scripts/generate_script.py
+    
+    - name: Search B-roll videos
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+      run: python scripts/search_videos.py
+    
+    - name: Generate audio
+      env:
+        GOOGLE_APPLICATION_CREDENTIALS: ${{ env.GOOGLE_APPLICATION_CREDENTIALS }}
+      run: python scripts/generate_audio.py
+    
+    - name: Create video
+      run: python scripts/create_video.py
+    
+    - name: Merge audio and video
+      run: python scripts/merge_audio_video.py
+    
+    - name: Generate thumbnail
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      run: python scripts/generate_thumbnail.py
+    
+    - name: Upload to YouTube
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+        YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+        YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+        MAIN_PLAYLIST_ID: ${{ secrets.MAIN_PLAYLIST_ID }}
+      run: python scripts/upload_youtube.py
+    
+    - name: Extract Shorts segments
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      run: python scripts/extract_shorts.py
+    
+    - name: Create Shorts
+      run: python scripts/create_shorts.py
+    
+    - name: Upload Shorts
+      env:
+        YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+        YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+        YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+        SHORTS_PLAYLIST_ID: ${{ secrets.SHORTS_PLAYLIST_ID }}
+      run: python scripts/upload_shorts.py
+    
+    - name: Upload artifacts (on failure)
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: debug-files
+        path: |
+          temp/
+          *.log
+        retention-days: 7
+    
+    - name: Clean up credentials
+      if: always()
+      run: |
+        rm -f google-credentials.json
+        rm -f token.pickle
