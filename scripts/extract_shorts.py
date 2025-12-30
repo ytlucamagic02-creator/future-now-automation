@@ -1,159 +1,111 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-롱폼 영상에서 쇼츠 구간 3개 추출
-"""
-
 import os
-import sys
 import json
-import ffmpeg
 from openai import OpenAI
+from pydub.utils import mediainfo
 
-def extract_shorts_segments(script):
-    """GPT로 쇼츠 구간 3개 추출"""
-    
-    print("✂️ Extracting 3 shorts segments from script...")
-    
-    client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-    
-    prompt = f"""Identify 3 compelling 30-50 second segments from this Future Tech script for YouTube Shorts.
+# temp 폴더 생성
+os.makedirs('temp', exist_ok=True)
 
-Full script:
+def extract_shorts_segments():
+    """Extract 3 shorts segments from the main script using AI"""
+    
+    print("📝 Extracting shorts segments from script...")
+    
+    # Read script
+    with open('temp/script.txt', 'r', encoding='utf-8') as f:
+        script = f.read()
+    
+    # Get audio duration
+    audio_info = mediainfo('temp/audio.mp3')
+    audio_duration = float(audio_info['duration'])
+    
+    print(f"📊 Script length: {len(script)} characters")
+    print(f"🎵 Audio duration: {audio_duration:.1f} seconds")
+    
+    # Initialize OpenAI
+    client = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
+    
+    # AI prompt for extracting shorts
+    prompt = f"""You are a YouTube Shorts expert for an AI & Future Technology channel.
+
+Extract exactly 3 engaging Shorts segments from this script.
+
+SCRIPT:
 {script}
 
-Each segment should:
-- Be self-contained (complete thought)
-- Have a HOOK (surprising fact/question)
-- Contain valuable insight
-- Be 30-50 seconds when spoken
-- Work standalone without context
+REQUIREMENTS:
+- Each Short should be 30-60 seconds of the most captivating content
+- Focus on: mind-blowing facts, bold predictions, controversial takes, or "aha!" moments
+- Structure: Hook (3-5 sec) → Core insight (20-40 sec) → Mini-CTA (5-10 sec)
+- Make titles punchy and curiosity-driven
+- Include 3-5 viral hashtags per Short
 
-For each segment, provide:
-1. Start text (first 3-5 words to identify where it starts)
-2. End text (last 3-5 words)
-3. Hook title (5-7 words, engaging)
-4. Estimated word count
-
-Return as JSON:
+OUTPUT FORMAT (JSON):
 {{
   "shorts": [
     {{
-      "id": 1,
-      "start_text": "first few words...",
-      "end_text": "...last few words",
-      "title": "Hook Title Here",
-      "word_count": 100
+      "title": "AI Will Replace 80% of Jobs by 2030",
+      "script": "full segment text (natural sentences, 30-60 seconds worth)",
+      "hook": "first sentence that grabs attention",
+      "estimated_start_time": 45.0,
+      "hashtags": "#AI #FutureTech #JobAutomation"
     }}
   ]
 }}
 
-Return ONLY valid JSON, no markdown, no explanation."""
+Return ONLY valid JSON, no markdown."""
 
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "You are a YouTube Shorts expert. Return only valid JSON."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.7,
-            response_format={"type": "json_object"}
-        )
+    # Call OpenAI
+    response = client.chat.completions.create(
+        model='gpt-4o-mini',
+        messages=[
+            {'role': 'system', 'content': 'You are a YouTube Shorts content strategist.'},
+            {'role': 'user', 'content': prompt}
+        ],
+        temperature=0.7,
+        max_tokens=2000
+    )
+    
+    # Parse response
+    result_text = response.choices[0].message.content.strip()
+    
+    # Remove markdown code blocks if present
+    if result_text.startswith('```'):
+        result_text = result_text.split('```')[1]
+        if result_text.startswith('json'):
+            result_text = result_text[4:]
+        result_text = result_text.strip()
+    
+    shorts_data = json.loads(result_text)
+    
+    # Estimate timestamps based on script position
+    script_lower = script.lower()
+    for short in shorts_data['shorts']:
+        # Try to find hook position in script
+        hook_lower = short['hook'].lower()[:50]  # First 50 chars
+        pos = script_lower.find(hook_lower)
         
-        result = json.loads(response.choices[0].message.content)
-        shorts = result.get("shorts", [])
-        
-        if len(shorts) < 3:
-            print(f"⚠️ Only {len(shorts)} segments found, expected 3")
-        
-        print(f"✅ Extracted {len(shorts)} shorts segments:")
-        for short in shorts:
-            print(f"   #{short['id']}: {short['title']} ({short['word_count']} words)")
-        
-        return shorts
-        
-    except Exception as e:
-        print(f"❌ Segment extraction failed: {e}")
-        sys.exit(1)
+        if pos != -1:
+            # Estimate time based on position
+            char_rate = len(script) / audio_duration
+            estimated_time = pos / char_rate
+            short['estimated_start_time'] = round(estimated_time, 1)
+        else:
+            # Fallback: distribute evenly
+            idx = shorts_data['shorts'].index(short)
+            short['estimated_start_time'] = round((audio_duration / 4) * (idx + 1), 1)
+    
+    # Save to file
+    with open('temp/shorts_segments.json', 'w', encoding='utf-8') as f:
+        json.dump(shorts_data, f, indent=2, ensure_ascii=False)
+    
+    print(f"✅ Extracted {len(shorts_data['shorts'])} shorts segments!")
+    
+    for i, short in enumerate(shorts_data['shorts'], 1):
+        print(f"\n📱 Short #{i}:")
+        print(f"   Title: {short['title']}")
+        print(f"   Start: ~{short['estimated_start_time']}s")
+        print(f"   Hook: {short['hook'][:60]}...")
 
-def find_timestamp(script, search_text):
-    """스크립트에서 텍스트 위치를 찾아 대략적인 타임스탬프 계산"""
-    
-    # 텍스트 찾기
-    pos = script.lower().find(search_text.lower())
-    if pos == -1:
-        # 부분 일치 시도
-        words = search_text.split()
-        for i in range(len(words), 0, -1):
-            partial = ' '.join(words[:i])
-            pos = script.lower().find(partial.lower())
-            if pos != -1:
-                break
-    
-    if pos == -1:
-        return 0
-    
-    # 위치를 시간으로 변환 (평균 150 단어/분 = 2.5 단어/초)
-    words_before = len(script[:pos].split())
-    seconds = words_before / 2.5
-    
-    return seconds
-
-def extract_shorts():
-    """메인 함수: 쇼츠 구간 추출"""
-    
-    print("✂️ Extracting shorts from main video...")
-    
-    # 대본 읽기
-    try:
-        with open("temp/script.txt", "r", encoding="utf-8") as f:
-            script = f.read()
-    except FileNotFoundError:
-        print("❌ Script not found!")
-        sys.exit(1)
-    
-    # 쇼츠 구간 추출
-    shorts = extract_shorts_segments(script)
-    
-    if len(shorts) < 3:
-        print("⚠️ Warning: Less than 3 shorts segments")
-    
-    # 타임스탬프 계산
-    segments_with_times = []
-    
-    for short in shorts[:3]:  # 최대 3개
-        start_time = find_timestamp(script, short['start_text'])
-        end_time = find_timestamp(script, short['end_text'])
-        
-        # 최소 길이 보장 (30초)
-        if end_time - start_time < 30:
-            end_time = start_time + 35
-        
-        # 최대 길이 제한 (60초)
-        if end_time - start_time > 60:
-            end_time = start_time + 50
-        
-        segments_with_times.append({
-            'id': short['id'],
-            'title': short['title'],
-            'start': round(start_time, 2),
-            'end': round(end_time, 2),
-            'duration': round(end_time - start_time, 2)
-        })
-        
-        print(f"\n📍 Short #{short['id']}: {short['title']}")
-        print(f"   Time: {start_time:.1f}s - {end_time:.1f}s (duration: {end_time-start_time:.1f}s)")
-    
-    # 저장
-    output = {'segments': segments_with_times}
-    
-    with open("temp/shorts_segments.json", "w") as f:
-        json.dump(output, f, indent=2)
-    
-    print(f"\n✅ Shorts extraction completed!")
-    print(f"📊 {len(segments_with_times)} segments identified")
-    print(f"💾 Saved to: temp/shorts_segments.json")
-
-if __name__ == "__main__":
-    extract_shorts()
+if __name__ == '__main__':
+    extract_shorts_segments()
