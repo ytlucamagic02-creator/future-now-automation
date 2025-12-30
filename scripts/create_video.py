@@ -1,163 +1,274 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
-무음 영상 생성 (1920x1080, B-roll 조합)
+영상 생성 스크립트 (FFmpeg 전용) - 에러 로깅 강화 버전
 """
 
+import json
 import os
 import sys
-import json
+import subprocess
+from pathlib import Path
 import requests
-import ffmpeg
+import time
 
-def download_video(url, output_path):
-    """영상 다운로드"""
+def download_video(url: str, output_path: str, max_retries=3) -> bool:
+    """영상 다운로드 (재시도 로직 추가)"""
+    for attempt in range(max_retries):
+        try:
+            print(f"      Downloading attempt {attempt + 1}/{max_retries}...", end=" ")
+            response = requests.get(url, stream=True, timeout=30)
+            response.raise_for_status()
+            
+            with open(output_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            
+            file_size = Path(output_path).stat().st_size
+            if file_size > 1024 * 100:  # 최소 100KB
+                print(f"Success ({file_size / 1024 / 1024:.1f}MB)")
+                return True
+            else:
+                print(f"Failed (file too small: {file_size}bytes)")
+                
+        except Exception as e:
+            print(f"Failed ({e})")
+            if attempt < max_retries - 1:
+                time.sleep(2)
+    
+    return False
+
+def get_video_duration(video_path: str) -> float:
+    """FFmpeg로 영상 길이 가져오기"""
     try:
-        response = requests.get(url, stream=True, timeout=30)
-        response.raise_for_status()
-        
-        with open(output_path, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
-        
-        return True
+        result = subprocess.run(
+            ['ffprobe', '-v', 'error', '-show_entries', 'format=duration',
+             '-of', 'default=noprint_wrappers=1:nokey=1', video_path],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        duration = float(result.stdout.strip())
+        print(f"      ✅ Duration: {duration:.1f}s")
+        return duration
     except Exception as e:
-        print(f"   ⚠️ Download failed: {e}")
+        print(f"      ⚠️ Duration check failed: {e}")
+        return 0.0
+
+def process_video_ffmpeg(input_path: str, output_path: str, target_duration: float = 30.0) -> bool:
+    """FFmpeg로 영상 처리"""
+    try:
+        duration = get_video_duration(input_path)
+        if duration == 0:
+            return False
+        
+        trim_duration = min(duration, target_duration)
+        
+        print(f"      🎬 Processing... (target: {trim_duration:.1f}s)", end=" ")
+        
+        result = subprocess.run([
+            'ffmpeg', '-y',
+            '-i', input_path,
+            '-t', str(trim_duration),
+            '-vf', 'scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080',
+            '-r', '30',
+            '-c:v', 'libx264',
+            '-preset', 'medium',
+            '-crf', '23',
+            '-an',
+            output_path
+        ], check=True, capture_output=True, text=True)
+        
+        print("Done")
+        return True
+        
+    except subprocess.CalledProcessError as e:
+        print(f"Failed")
+        print(f"      FFmpeg stderr: {e.stderr[:200]}")
+        return False
+    except Exception as e:
+        print(f"Failed: {e}")
         return False
 
+def create_concat_file(clip_paths: list, concat_file: str):
+    """FFmpeg concat 파일 생성"""
+    with open(concat_file, 'w') as f:
+        for path in clip_paths:
+            abs_path = Path(path).resolve()
+            f.write(f"file '{abs_path}'\n")
+
+def extract_video_urls(videos_data):
+    """videos.json에서 영상 URL 추출"""
+    print(f"\n🔍 Analyzing videos.json:")
+    print(f"   Type: {type(videos_data)}")
+    
+    video_urls = []
+    
+    # List 형식
+    if isinstance(videos_data, list):
+        print(f"   Format: list (length: {len(videos_data)})")
+        
+        for i, video in enumerate(videos_data):
+            if not isinstance(video, dict):
+                continue
+            
+            if "url" in video and "width" in video:
+                url = video["url"]
+                width = video["width"]
+                
+                if width >= 1920 and url:
+                    video_urls.append(url)
+                    print(f"   ✅ [{i}] HD video: {width}x{video.get('height', '?')}")
+    
+    # Dict 형식
+    elif isinstance(videos_data, dict):
+        print(f"   Format: dict")
+        videos = videos_data.get("videos", [])
+        
+        for i, video in enumerate(videos):
+            if "url" in video and "width" in video:
+                if video["width"] >= 1920:
+                    video_urls.append(video["url"])
+                    print(f"   ✅ [{i}] HD video")
+    
+    print(f"\n   📊 Extracted URLs: {len(video_urls)}\n")
+    return video_urls
+
 def create_video():
-    """B-roll 영상들을 조합하여 무음 영상 생성"""
+    """메인 영상 생성"""
+    print("\n" + "=" * 60)
+    print("🎬 Silent video creation started")
+    print("=" * 60)
     
-    print("🎬 Creating silent video from B-roll footage...")
+    # temp 폴더 생성
+    os.makedirs('temp', exist_ok=True)
+    os.makedirs('temp/clips', exist_ok=True)
     
-    # videos.json 읽기
+    videos_json = Path("temp/videos.json")
+    temp_dir = Path("temp/clips")
+    output_file = Path("temp/silent_video.mp4")
+    
+    # 1단계: 파일 존재 확인
+    if not videos_json.exists():
+        print(f"\n❌ CRITICAL: videos.json not found!")
+        print(f"   Path: {videos_json.absolute()}")
+        sys.exit(1)
+    
+    # 2단계: JSON 로드
     try:
-        with open("temp/videos.json", "r", encoding="utf-8") as f:
-            videos = json.load(f)
-    except FileNotFoundError:
-        print("❌ videos.json not found!")
+        with open(videos_json, 'r', encoding='utf-8') as f:
+            videos_data = json.load(f)
+        print(f"✅ videos.json loaded")
+    except Exception as e:
+        print(f"❌ CRITICAL: videos.json load failed: {e}")
         sys.exit(1)
     
-    if len(videos) < 8:
-        print(f"❌ Not enough videos: {len(videos)} (need at least 8)")
+    # 3단계: URL 추출
+    video_urls = extract_video_urls(videos_data)
+    
+    if not video_urls:
+        print(f"\n❌ CRITICAL: No video URLs available!")
         sys.exit(1)
     
-    print(f"📹 Processing {len(videos)} video clips...")
+    # 4단계: 영상 처리 준비
+    target_duration = 540  # 9분
+    needed_videos = 18
     
-    # 영상 다운로드 및 처리
-    downloaded_files = []
-    target_duration = 480  # 8분 목표
+    print(f"\n🎯 Target:")
+    print(f"   Duration: {target_duration / 60:.1f} minutes")
+    print(f"   Videos needed: {needed_videos}")
+    print(f"   Videos found: {len(video_urls)}")
     
-    for i, video in enumerate(videos, 1):
-        video_path = f"temp/clip_{i}.mp4"
-        
-        print(f"\n[{i}/{len(videos)}] {video['keyword']}")
-        print(f"   Duration: {video['duration']}s")
-        print(f"   Downloading...")
-        
-        if download_video(video['url'], video_path):
-            downloaded_files.append({
-                'path': video_path,
-                'duration': video['duration']
-            })
-            print(f"   ✅ Downloaded")
-        else:
-            print(f"   ⚠️ Skipped")
+    # 부족하면 반복
+    if len(video_urls) < needed_videos:
+        repeat_count = needed_videos - len(video_urls)
+        video_urls.extend(video_urls[:repeat_count])
+        print(f"   Videos repeated: +{repeat_count}")
     
-    if len(downloaded_files) < 8:
-        print(f"\n❌ Only {len(downloaded_files)} videos downloaded (need 8+)")
-        sys.exit(1)
+    video_urls = video_urls[:needed_videos]
     
-    print(f"\n✅ Downloaded {len(downloaded_files)} clips")
-    
-    # 총 길이 계산
-    total_duration = sum(clip['duration'] for clip in downloaded_files)
-    print(f"📊 Total raw duration: {total_duration:.1f}s ({total_duration/60:.1f} min)")
-    
-    # 각 클립을 목표 길이에 맞게 사용
-    # 목표: 8분 = 480초, 16개 클립 = 각 30초씩
-    clips_per_duration = target_duration / len(downloaded_files)
-    print(f"⚙️ Target per clip: {clips_per_duration:.1f}s")
-    
-    # FFmpeg concat 파일 생성
-    concat_file = "temp/video_concat.txt"
+    # 5단계: 영상 다운로드 + 처리
+    print(f"\n📥 Video download & processing:")
     processed_clips = []
     
-    for i, clip in enumerate(downloaded_files, 1):
-        input_path = clip['path']
-        output_path = f"temp/processed_{i}.mp4"
-        clip_duration = min(clip['duration'], clips_per_duration)
+    for i, url in enumerate(video_urls, 1):
+        print(f"\n   [{i}/{len(video_urls)}] Processing...")
+        print(f"      URL: {url[:60]}...")
         
-        try:
-            # 클립 처리: 1920x1080 크기 조정, 길이 제한
-            (
-                ffmpeg
-                .input(input_path, t=clip_duration)
-                .filter('scale', 1920, 1080, force_original_aspect_ratio='decrease')
-                .filter('pad', 1920, 1080, '(ow-iw)/2', '(oh-ih)/2')
-                .output(output_path, vcodec='libx264', preset='medium', crf=23, an=None)
-                .overwrite_output()
-                .run(capture_stdout=True, capture_stderr=True, quiet=True)
-            )
-            
-            processed_clips.append(output_path)
-            print(f"   [{i}/{len(downloaded_files)}] Processed: {clip_duration:.1f}s")
-            
-        except ffmpeg.Error as e:
-            print(f"   ⚠️ Processing failed for clip {i}")
+        raw_path = temp_dir / f"raw_{i}.mp4"
+        if not download_video(url, str(raw_path)):
+            print(f"      ⚠️ Download failed, next...")
             continue
+        
+        processed_path = temp_dir / f"clip_{i}.mp4"
+        if process_video_ffmpeg(str(raw_path), str(processed_path)):
+            processed_clips.append(str(processed_path))
+            print(f"      ✅ Processing completed!")
+        else:
+            print(f"      ⚠️ Processing failed, next...")
+        
+        # 원본 삭제
+        raw_path.unlink(missing_ok=True)
     
-    if len(processed_clips) < 8:
-        print(f"\n❌ Only {len(processed_clips)} clips processed successfully")
+    # 6단계: 최소 영상 개수 체크
+    if not processed_clips:
+        print(f"\n❌ CRITICAL: No processed videos!")
         sys.exit(1)
     
-    # Concat 파일 생성
-    with open(concat_file, 'w') as f:
-        for clip_path in processed_clips:
-            f.write(f"file '{os.path.basename(clip_path)}'\n")
+    print(f"\n✅ Total {len(processed_clips)} videos processed")
     
-    print(f"\n🎬 Concatenating {len(processed_clips)} clips...")
+    # 7단계: 영상 병합
+    concat_file = temp_dir / "concat.txt"
+    create_concat_file(processed_clips, str(concat_file))
     
-    # 최종 영상 생성
+    print(f"\n🔗 Merging videos...")
     try:
-        (
-            ffmpeg
-            .input(concat_file, format='concat', safe=0)
-            .output('temp/silent_video.mp4', vcodec='libx264', preset='medium', crf=23)
-            .overwrite_output()
-            .run(capture_stdout=True, capture_stderr=True)
-        )
+        subprocess.run([
+            'ffmpeg', '-y',
+            '-f', 'concat',
+            '-safe', '0',
+            '-i', str(concat_file),
+            '-c', 'copy',
+            str(output_file)
+        ], check=True, capture_output=True, text=True)
         
-        # 파일 크기 및 정보 확인
-        file_size = os.path.getsize('temp/silent_video.mp4')
-        probe = ffmpeg.probe('temp/silent_video.mp4')
-        video_duration = float(probe['streams'][0]['duration'])
+        print(f"✅ Merge completed!")
         
-        print(f"\n✅ Silent video created!")
-        print(f"💾 Saved to: temp/silent_video.mp4")
-        print(f"📦 File size: {file_size/1024/1024:.1f} MB")
-        print(f"⏱️ Duration: {video_duration:.1f}s ({video_duration/60:.1f} min)")
-        print(f"🎞️ Resolution: 1920x1080")
-        
-    except ffmpeg.Error as e:
-        print(f"❌ Video concatenation failed: {e.stderr.decode()}")
+    except subprocess.CalledProcessError as e:
+        print(f"❌ CRITICAL: Merge failed!")
+        print(f"   FFmpeg stderr: {e.stderr[:300]}")
         sys.exit(1)
+    
+    # 8단계: 최종 확인
+    if not output_file.exists():
+        print(f"\n❌ CRITICAL: Final video not created!")
+        sys.exit(1)
+    
+    final_duration = get_video_duration(str(output_file))
+    final_size = output_file.stat().st_size / (1024 * 1024)
+    
+    print(f"\n" + "=" * 60)
+    print(f"🎉 Silent video creation completed!")
+    print(f"=" * 60)
+    print(f"   📁 File: {output_file}")
+    print(f"   📊 Size: {final_size:.1f} MB")
+    print(f"   ⏱️  Duration: {final_duration / 60:.1f} minutes")
+    print(f"   🎬 Clips: {len(processed_clips)}")
+    print(f"   🔇 Audio: None (will be merged in next step)")
+    print("=" * 60)
     
     # 정리
-    print("\n🧹 Cleaning up temporary files...")
-    for clip in downloaded_files:
-        try:
-            os.remove(clip['path'])
-        except:
-            pass
-    
+    concat_file.unlink(missing_ok=True)
     for clip in processed_clips:
-        try:
-            os.remove(clip)
-        except:
-            pass
-    
-    print("✅ Cleanup completed")
+        Path(clip).unlink(missing_ok=True)
 
 if __name__ == "__main__":
-    create_video()
+    try:
+        create_video()
+    except KeyboardInterrupt:
+        print("\n\n⚠️ User interrupted")
+        sys.exit(1)
+    except Exception as e:
+        print(f"\n\n❌ UNEXPECTED ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
