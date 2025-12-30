@@ -1,214 +1,222 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Pexels API로 Future Tech B-roll 영상 검색
+Pexels API로 AI/Future Tech B-roll 영상 검색
 """
 
 import os
-import sys
 import json
 import requests
+import random
 from openai import OpenAI
 
-def extract_keywords(script):
-    """GPT로 대본에서 영상 키워드 추출"""
+def extract_keywords():
+    """스크립트에서 AI/Tech 키워드 추출"""
     
-    print("🔍 Extracting visual keywords from script...")
+    # temp 폴더 생성
+    os.makedirs('temp', exist_ok=True)
     
-    client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+    api_key = os.environ.get('OPENAI_API_KEY')
+    if not api_key:
+        raise ValueError("❌ OPENAI_API_KEY not found!")
     
-    prompt = f"""Extract 16 visual search keywords from this Future Tech script for finding B-roll footage.
+    client = OpenAI(api_key=api_key)
+    
+    # 스크립트 읽기
+    with open('temp/script.txt', 'r', encoding='utf-8') as f:
+        script = f.read()
+    
+    prompt = f"""You are a video search expert specializing in CINEMATIC AI and technology footage.
+
+Extract 10-12 short English keywords from this AI/Future Tech script for finding professional B-roll video footage on Pexels.
+
+CRITICAL REQUIREMENTS:
+- Focus on REAL, CINEMATIC tech visuals (NOT cartoons or animations)
+- Prioritize: AI interfaces, robots, futuristic cities, data centers, coding, research labs, modern architecture
+- Each keyword should work well with "cinematic" or "futuristic" modifiers
+- Avoid: toys, cartoons, abstract art, generic concepts
+- IMPORTANT: Use DIVERSE keywords to avoid repetitive footage
+
+GOOD KEYWORD EXAMPLES:
+✅ AI robot arm factory
+✅ data center servers glowing
+✅ programmer coding at night
+✅ futuristic city skyline
+✅ hologram display interface
+✅ quantum computer lab
+✅ autonomous car driving
+✅ scientist researching technology
+✅ modern glass building aerial
+✅ neural network visualization
+✅ smart city traffic night
+✅ space station interior
+
+BAD KEYWORD EXAMPLES (AVOID):
+❌ cartoon robot
+❌ toy technology
+❌ abstract AI
+❌ generic computer
 
 Script:
-{script[:2000]}
+{script[:1500]}
 
-Requirements:
-- Focus on VISUAL concepts (things you can SEE and FILM)
-- Future tech themes: AI, robots, technology, computers, digital, data, space, innovation
-- Cinematic and professional
-- Mix of: close-ups, wide shots, abstract concepts
-- Each keyword 1-3 words
-- In English
+Output ONLY the keywords separated by commas, nothing else.
+Focus on REAL, FILMABLE, CINEMATIC tech scenes with VARIETY."""
 
-Examples:
-- "artificial intelligence"
-- "robotic arm"
-- "data center"
-- "futuristic city"
-- "quantum computer"
-- "space station"
-- "holographic display"
-- "neural network visualization"
+    print("🔍 Extracting AI/Tech keywords...")
+    
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.7,
+        max_tokens=200
+    )
+    
+    keywords = response.choices[0].message.content.strip()
+    print(f"✅ Keywords extracted: {keywords}")
+    
+    return keywords
 
-Return EXACTLY 16 keywords, one per line, no numbering, no extra text."""
-
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "You are a cinematography expert specializing in tech and science footage."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.7
-        )
+def search_pexels_videos(keywords):
+    """Pexels API로 다양한 영상 검색"""
+    
+    api_key = os.environ.get('PEXELS_API_KEY')
+    if not api_key:
+        raise ValueError("❌ PEXELS_API_KEY not found!")
+    
+    headers = {'Authorization': api_key}
+    
+    keyword_list = [k.strip() for k in keywords.split(',')]
+    
+    video_urls = []
+    
+    print(f"🎬 Searching Pexels videos... ({len(keyword_list)} keywords)")
+    
+    # 다양한 스타일
+    style_modifiers = [
+        'cinematic', 'futuristic', 'modern', 'professional',
+        'tech', 'innovative', 'digital', 'advanced'
+    ]
+    
+    # 각 키워드당 2개 영상 = 총 16-20개
+    for keyword in keyword_list[:10]:
+        modifier = random.choice(style_modifiers)
+        search_query = f"{keyword} {modifier}"
         
-        keywords_text = response.choices[0].message.content.strip()
-        keywords = [k.strip().strip('"').strip("'").strip('-').strip() 
-                   for k in keywords_text.split('\n') if k.strip()]
+        random_page = random.randint(1, 5)
         
-        # 정확히 16개 보장
-        keywords = keywords[:16]
-        while len(keywords) < 16:
-            keywords.append("technology innovation")
-        
-        print(f"✅ Extracted {len(keywords)} keywords")
-        for i, kw in enumerate(keywords, 1):
-            print(f"   {i}. {kw}")
-        
-        return keywords
-        
-    except Exception as e:
-        print(f"⚠️ Keyword extraction failed: {e}")
-        # 기본 Future Tech 키워드
-        return [
-            "artificial intelligence", "robot technology", "data center",
-            "quantum computer", "futuristic city", "space exploration",
-            "holographic display", "neural network", "autonomous vehicle",
-            "virtual reality", "biotechnology lab", "smart city",
-            "rocket launch", "digital technology", "innovation concept",
-            "future technology"
-        ]
-
-def search_pexels(keyword, api_key, orientation="landscape", per_page=5):
-    """Pexels에서 영상 검색"""
-    
-    url = "https://api.pexels.com/videos/search"
-    headers = {"Authorization": api_key}
-    params = {
-        "query": keyword,
-        "orientation": orientation,
-        "size": "large",
-        "per_page": per_page
-    }
-    
-    try:
-        response = requests.get(url, headers=headers, params=params, timeout=10)
-        response.raise_for_status()
-        return response.json()
-    except Exception as e:
-        print(f"⚠️ Pexels search failed for '{keyword}': {e}")
-        return {"videos": []}
-
-def search_videos():
-    """메인 함수: B-roll 영상 검색 및 저장"""
-    
-    print("🎬 Searching Future Tech B-roll footage on Pexels...")
-    
-    # API 키 확인
-    pexels_api_key = os.environ.get("PEXELS_API_KEY")
-    if not pexels_api_key:
-        print("❌ PEXELS_API_KEY not found!")
-        sys.exit(1)
-    
-    # 대본 읽기
-    try:
-        with open("temp/script.txt", "r", encoding="utf-8") as f:
-            script = f.read()
-    except FileNotFoundError:
-        print("❌ Script not found at temp/script.txt")
-        sys.exit(1)
-    
-    # 키워드 추출
-    keywords = extract_keywords(script)
-    
-    # 영상 검색 (키워드당 1개씩, 총 16개)
-    all_videos = []
-    
-    for i, keyword in enumerate(keywords, 1):
-        print(f"\n🔍 [{i}/16] Searching: '{keyword}'")
-        
-        result = search_pexels(keyword, pexels_api_key, per_page=5)
-        videos = result.get("videos", [])
-        
-        if videos:
-            # 가장 좋은 영상 선택 (1080p 이상, duration > 5초)
-            selected = None
-            for video in videos:
-                duration = video.get("duration", 0)
-                video_files = video.get("video_files", [])
-                
-                # 1080p 파일 찾기
-                hd_files = [vf for vf in video_files 
-                           if vf.get("height", 0) >= 1080 and vf.get("width", 0) >= 1920]
-                
-                if hd_files and duration >= 5:
-                    selected = {
-                        "id": video.get("id"),
-                        "keyword": keyword,
-                        "duration": duration,
-                        "url": hd_files[0].get("link"),
-                        "width": hd_files[0].get("width"),
-                        "height": hd_files[0].get("height")
-                    }
-                    break
+        try:
+            response = requests.get(
+                'https://api.pexels.com/videos/search',
+                headers=headers,
+                params={
+                    'query': search_query,
+                    'per_page': 3,
+                    'orientation': 'landscape',
+                    'size': 'large',
+                    'page': random_page
+                },
+                timeout=10
+            )
             
-            if selected:
-                all_videos.append(selected)
-                print(f"   ✅ Found: {selected['duration']}s, {selected['width']}x{selected['height']}")
-            else:
-                print(f"   ⚠️ No suitable video found")
-        else:
-            print(f"   ⚠️ No results")
+            if response.status_code == 200:
+                data = response.json()
+                if data['videos']:
+                    count = 0
+                    for video in data['videos']:
+                        if count >= 2:
+                            break
+                        
+                        duration = video.get('duration', 0)
+                        
+                        if duration < 10:
+                            continue
+                        
+                        # HD 화질
+                        video_file = next(
+                            (f for f in video['video_files'] if f['width'] >= 1920),
+                            None
+                        )
+                        
+                        if not video_file:
+                            continue
+                        
+                        video_urls.append({
+                            'keyword': keyword,
+                            'style': modifier,
+                            'page': random_page,
+                            'url': video_file['link'],
+                            'duration': duration,
+                            'width': video_file['width'],
+                            'height': video_file['height'],
+                            'quality': video_file.get('quality', 'hd')
+                        })
+                        
+                        print(f"  ✅ {keyword} ({modifier}, p{random_page}): {video_file.get('quality', 'hd').upper()}")
+                        count += 1
+                        
+                        if len(video_urls) >= 16:
+                            break
+            
+            if len(video_urls) >= 16:
+                break
+                
+        except Exception as e:
+            print(f"  ⚠️ {keyword} search failed: {e}")
     
-    # 결과 확인
-    if len(all_videos) < 10:
-        print(f"\n⚠️ Warning: Only {len(all_videos)} videos found (minimum 10 recommended)")
-        print("   Filling with backup searches...")
-        
-        # 백업 키워드로 부족분 채우기
-        backup_keywords = [
-            "technology abstract", "digital data", "computer network",
-            "innovation concept", "futuristic background", "tech visualization"
-        ]
-        
-        for keyword in backup_keywords:
-            if len(all_videos) >= 16:
+    # 부족하면 추가 검색
+    if len(video_urls) < 16:
+        print(f"   ℹ️  Only {len(video_urls)} found, searching more...")
+        for keyword in keyword_list[len(video_urls) // 2:]:
+            if len(video_urls) >= 16:
                 break
             
-            result = search_pexels(keyword, pexels_api_key, per_page=3)
-            videos = result.get("videos", [])
+            random_page = random.randint(1, 5)
             
-            for video in videos:
-                if len(all_videos) >= 16:
-                    break
+            try:
+                response = requests.get(
+                    'https://api.pexels.com/videos/search',
+                    headers=headers,
+                    params={
+                        'query': keyword,
+                        'per_page': 2,
+                        'orientation': 'landscape',
+                        'page': random_page
+                    },
+                    timeout=10
+                )
                 
-                duration = video.get("duration", 0)
-                video_files = video.get("video_files", [])
-                hd_files = [vf for vf in video_files if vf.get("height", 0) >= 1080]
-                
-                if hd_files and duration >= 5:
-                    all_videos.append({
-                        "id": video.get("id"),
-                        "keyword": keyword,
-                        "duration": duration,
-                        "url": hd_files[0].get("link"),
-                        "width": hd_files[0].get("width"),
-                        "height": hd_files[0].get("height")
-                    })
+                if response.status_code == 200:
+                    data = response.json()
+                    for video in data['videos'][:2]:
+                        if len(video_urls) >= 16:
+                            break
+                        
+                        video_file = video['video_files'][0]
+                        video_urls.append({
+                            'keyword': keyword,
+                            'style': 'standard',
+                            'page': random_page,
+                            'url': video_file['link'],
+                            'duration': video['duration'],
+                            'width': video_file['width'],
+                            'height': video_file['height']
+                        })
+                        print(f"  ✅ {keyword} (standard, p{random_page})")
+            except:
+                pass
     
-    # 저장
-    with open("temp/videos.json", "w", encoding="utf-8") as f:
-        json.dump(all_videos, f, indent=2)
+    # JSON 저장
+    with open('temp/videos.json', 'w', encoding='utf-8') as f:
+        json.dump(video_urls, f, indent=2, ensure_ascii=False)
     
-    total_duration = sum(v["duration"] for v in all_videos)
-    print(f"\n✅ Search completed!")
-    print(f"📊 Found {len(all_videos)} videos")
-    print(f"⏱️ Total duration: {total_duration:.1f} seconds")
-    print(f"💾 Saved to: temp/videos.json")
+    print(f"\n✅ Total {len(video_urls)} videos found!")
+    print(f"   🎬 Cinematic: {sum(1 for v in video_urls if v.get('style') in style_modifiers)}")
+    print(f"   📹 Standard: {sum(1 for v in video_urls if v.get('style') == 'standard')}")
+    print(f"   📄 Saved: temp/videos.json")
     
-    if len(all_videos) < 10:
-        print(f"\n⚠️ WARNING: Only {len(all_videos)} videos (need 10+ for 6-8 min video)")
-        print("   Video creation may fail or be shorter than expected")
+    return video_urls
 
 if __name__ == "__main__":
-    search_videos()
+    keywords = extract_keywords()
+    search_pexels_videos(keywords)
