@@ -1,21 +1,9 @@
-# OpenAI
 openai>=1.12.0
-
-# Google Cloud TTS
 google-cloud-texttospeech>=2.14.1
-
-# YouTube API
 google-auth>=2.16.0
 google-auth-oauthlib>=1.0.0
 google-auth-httplib2>=0.1.0
-google-api-python-client>=2.88.0
-
-# Video/Audio Processing
-ffmpeg-python>=0.2.0
-Pillow>=10.0.0
-
-# HTTP Requests
+google-api-python-client>=2.80.0
 requests>=2.31.0
-
-# Utilities
-python-dotenv>=1.0.0
+Pillow>=10.0.0
+pydub>=0.25.1
