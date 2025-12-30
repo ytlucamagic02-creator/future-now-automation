@@ -21,7 +21,7 @@ jobs:
     - name: Install system dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y ffmpeg  # ✅ ffmpeg만 설치 (ffprobe 포함)
+        sudo apt-get install -y ffmpeg
     
     - name: Install Python dependencies
       run: |
